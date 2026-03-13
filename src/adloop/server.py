@@ -26,6 +26,12 @@ mcp = FastMCP(
 _config = load_config()
 
 
+def _reload_config() -> None:
+    """Reload configuration from disk (called after setup_credentials)."""
+    global _config
+    _config = load_config()
+
+
 def _safe(fn: Callable) -> Callable:
     """Wrap a tool function so exceptions return structured error dicts."""
 
@@ -776,3 +782,136 @@ def estimate_budget(
         forecast_days=forecast_days,
         customer_id=customer_id or _config.ads.customer_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Setup / Configuration Tool (for remote deployment)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_WRITE)
+@_safe
+def setup_credentials(
+    developer_token: str,
+    customer_id: str,
+    login_customer_id: str = "",
+    oauth_client_id: str = "",
+    oauth_client_secret: str = "",
+    oauth_refresh_token: str = "",
+    service_account_json: str = "",
+    google_project_id: str = "",
+    ga4_property_id: str = "",
+    max_daily_budget: float = 50.0,
+    require_dry_run: bool = True,
+) -> dict:
+    """Configure AdLoop credentials — call this once before using other tools.
+
+    Provide EITHER OAuth credentials (client_id + client_secret + refresh_token)
+    OR a service_account_json string (the full JSON contents of a service account key).
+
+    Required:
+      - developer_token: Google Ads API developer token (from MCC API Center)
+      - customer_id: Google Ads account ID (format: 1234567890, no dashes)
+
+    For OAuth (recommended):
+      - oauth_client_id: OAuth 2.0 Client ID from Google Cloud Console
+      - oauth_client_secret: OAuth 2.0 Client Secret
+      - oauth_refresh_token: Refresh token obtained from OAuth consent flow
+
+    For Service Account:
+      - service_account_json: Full JSON string of the service account key file
+
+    Optional:
+      - login_customer_id: MCC manager account ID (if using MCC)
+      - google_project_id: Google Cloud project ID
+      - ga4_property_id: GA4 property ID for analytics features
+      - max_daily_budget: Safety cap for daily budget (default 50.0)
+      - require_dry_run: Whether to enforce dry_run on all writes (default true)
+    """
+    import json
+    from pathlib import Path
+
+    import yaml
+
+    adloop_dir = Path.home() / ".adloop"
+    adloop_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write credentials file
+    creds_path = adloop_dir / "credentials.json"
+    if service_account_json:
+        try:
+            creds_data = json.loads(service_account_json)
+        except json.JSONDecodeError:
+            return {"error": "service_account_json is not valid JSON"}
+        with open(creds_path, "w") as f:
+            json.dump(creds_data, f, indent=2)
+    elif oauth_client_id and oauth_client_secret:
+        creds_data = {
+            "installed": {
+                "client_id": oauth_client_id,
+                "client_secret": oauth_client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": ["http://localhost"],
+            }
+        }
+        with open(creds_path, "w") as f:
+            json.dump(creds_data, f, indent=2)
+
+        # Write token file if refresh token provided
+        if oauth_refresh_token:
+            token_data = {
+                "token": "",
+                "refresh_token": oauth_refresh_token,
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_id": oauth_client_id,
+                "client_secret": oauth_client_secret,
+                "scopes": [
+                    "https://www.googleapis.com/auth/analytics.readonly",
+                    "https://www.googleapis.com/auth/analytics.edit",
+                    "https://www.googleapis.com/auth/adwords",
+                ],
+            }
+            token_path = adloop_dir / "token.json"
+            with open(token_path, "w") as f:
+                json.dump(token_data, f, indent=2)
+    else:
+        return {
+            "error": "Provide either (oauth_client_id + oauth_client_secret + oauth_refresh_token) or service_account_json"
+        }
+
+    # Write config.yaml
+    config_data = {
+        "google": {
+            "project_id": google_project_id,
+            "credentials_path": str(creds_path),
+            "token_path": str(adloop_dir / "token.json"),
+        },
+        "ga4": {
+            "property_id": ga4_property_id,
+        },
+        "ads": {
+            "developer_token": developer_token,
+            "customer_id": customer_id.replace("-", ""),
+            "login_customer_id": login_customer_id.replace("-", ""),
+        },
+        "safety": {
+            "max_daily_budget": max_daily_budget,
+            "require_dry_run": require_dry_run,
+            "log_file": str(adloop_dir / "audit.log"),
+        },
+    }
+
+    config_path = adloop_dir / "config.yaml"
+    with open(config_path, "w") as f:
+        yaml.dump(config_data, f, default_flow_style=False)
+
+    # Reload config so all tools pick up the new credentials
+    _reload_config()
+
+    return {
+        "status": "ok",
+        "message": "Credentials configured successfully. Run health_check to verify connectivity.",
+        "config_path": str(config_path),
+        "credentials_path": str(creds_path),
+    }
