@@ -13,6 +13,52 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# URL validation — verify URLs exist before creating ads/sitelinks
+# ---------------------------------------------------------------------------
+
+
+def _validate_urls(urls: list[str], timeout: int = 10) -> dict[str, str | None]:
+    """Check that each URL returns a 2xx/3xx status.
+
+    Returns a dict of {url: error_message_or_None}. None means the URL is fine.
+    """
+    import urllib.request
+    import urllib.error
+
+    results = {}
+    for url in urls:
+        if not url:
+            continue
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            req.add_header("User-Agent", "AdLoop-URLCheck/1.0")
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            if resp.status >= 400:
+                results[url] = f"HTTP {resp.status}"
+            else:
+                results[url] = None
+        except urllib.error.HTTPError as e:
+            if e.code == 405:
+                # HEAD not allowed, try GET
+                try:
+                    req = urllib.request.Request(url, method="GET")
+                    req.add_header("User-Agent", "AdLoop-URLCheck/1.0")
+                    resp = urllib.request.urlopen(req, timeout=timeout)
+                    if resp.status >= 400:
+                        results[url] = f"HTTP {resp.status}"
+                    else:
+                        results[url] = None
+                except Exception as e2:
+                    results[url] = str(e2)
+            else:
+                results[url] = f"HTTP {e.code}"
+        except Exception as e:
+            results[url] = str(e)
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Draft tools — validate inputs, create a ChangePlan, return preview
 # ---------------------------------------------------------------------------
 
@@ -43,6 +89,16 @@ def draft_responsive_search_ad(
     errors = _validate_rsa(ad_group_id, headlines, descriptions, final_url)
     if errors:
         return {"error": "Validation failed", "details": errors}
+
+    url_check = _validate_urls([final_url])
+    if url_check.get(final_url):
+        return {
+            "error": "URL validation failed",
+            "details": [
+                f"final_url '{final_url}' is not reachable: {url_check[final_url]}. "
+                f"Ads MUST point to working URLs."
+            ],
+        }
 
     warnings = []
     if len(headlines) < 8:
@@ -219,6 +275,10 @@ def remove_entity(
     if errors:
         return {"error": "Validation failed", "details": errors}
 
+    # Normalize campaign_asset IDs: commas → tildes
+    if entity_type == "campaign_asset":
+        entity_id = entity_id.replace(",", "~")
+
     plan = ChangePlan(
         operation="remove_entity",
         entity_type=entity_type,
@@ -371,6 +431,17 @@ def draft_sitelinks(
     if errors:
         return {"error": "Validation failed", "details": errors}
 
+    sitelink_urls = [sl["final_url"] for sl in validated]
+    url_checks = _validate_urls(sitelink_urls)
+    bad_urls = {u: err for u, err in url_checks.items() if err}
+    if bad_urls:
+        return {
+            "error": "URL validation failed — sitelinks MUST point to working URLs",
+            "details": [
+                f"'{url}' is not reachable: {err}" for url, err in bad_urls.items()
+            ],
+        }
+
     if len(validated) < 2:
         warnings.append(
             "Google recommends at least 4 sitelinks per campaign. "
@@ -489,7 +560,7 @@ def confirm_and_apply(
 
 _VALID_MATCH_TYPES = {"EXACT", "PHRASE", "BROAD"}
 _VALID_ENTITY_TYPES = {"campaign", "ad_group", "ad", "keyword"}
-_REMOVABLE_ENTITY_TYPES = _VALID_ENTITY_TYPES | {"negative_keyword"}
+_REMOVABLE_ENTITY_TYPES = _VALID_ENTITY_TYPES | {"negative_keyword", "campaign_asset"}
 
 _SMART_BIDDING_STRATEGIES = {
     "MAXIMIZE_CONVERSIONS",
@@ -1019,6 +1090,29 @@ def _apply_remove(
         response = service.mutate_campaign_criteria(
             customer_id=cid, operations=[operation]
         )
+
+    elif entity_type == "campaign_asset":
+        # Campaign asset composite ID: {campaign_id}~{asset_id}~{field_type}
+        parts = entity_id.replace(",", "~").split("~")
+        if len(parts) != 3:
+            raise ValueError(
+                f"campaign_asset entity_id must be "
+                f"'campaignId~assetId~fieldType', got '{entity_id}'"
+            )
+        ca_service = client.get_service("CampaignAssetService")
+        resource_name = ca_service.campaign_asset_path(
+            cid, parts[0], parts[1], parts[2]
+        )
+        ga_service = client.get_service("GoogleAdsService")
+        op = client.get_type("MutateOperation")
+        op.campaign_asset_operation.remove = resource_name
+        response = ga_service.mutate(
+            customer_id=cid, mutate_operations=[op]
+        )
+        resp_inner = response.mutate_operation_responses[0]
+        if resp_inner.campaign_asset_result.resource_name:
+            return {"resource_name": resp_inner.campaign_asset_result.resource_name}
+        return {"resource_name": resource_name, "status": "removed"}
 
     else:
         raise ValueError(f"Cannot remove entity_type: {entity_type}")

@@ -79,7 +79,7 @@ These tools call both APIs internally and return unified results with computed `
 | `add_negative_keywords` | Propose negative keywords (does NOT add) | `campaign_id`, keyword list, `match_type` |
 | `pause_entity` | Propose pausing campaign/ad group/ad/keyword | `entity_type`, `entity_id` |
 | `enable_entity` | Propose enabling paused entity | `entity_type`, `entity_id` |
-| `remove_entity` | Propose REMOVING an entity (irreversible) | `entity_type` (incl. "negative_keyword"), `entity_id` |
+| `remove_entity` | Propose REMOVING an entity (irreversible) | `entity_type` (incl. "negative_keyword", "campaign_asset"), `entity_id` |
 | `confirm_and_apply` | Execute a previously previewed change | `plan_id` from a draft tool, `dry_run` (default true) |
 
 **Write tool workflow:**
@@ -92,7 +92,7 @@ These tools call both APIs internally and return unified results with computed `
 - New campaigns and RSAs are created as PAUSED — user must explicitly enable them after review.
 - `draft_campaign` enforces the `max_daily_budget` safety cap, rejects BROAD match + non-Smart Bidding, and warns if budget is below 5x target CPA.
 - `remove_entity` is IRREVERSIBLE — always prefer `pause_entity` unless the user explicitly wants permanent removal. Removal triggers double confirmation in the safety layer.
-- `remove_entity` supports `entity_type` values: "campaign", "ad_group", "ad", "keyword", "negative_keyword". Use "negative_keyword" to remove campaign-level negative keywords.
+- `remove_entity` supports `entity_type` values: "campaign", "ad_group", "ad", "keyword", "negative_keyword", "campaign_asset". Use "negative_keyword" to remove campaign-level negative keywords. Use "campaign_asset" to remove sitelinks and other asset links from a campaign.
 - `require_dry_run: true` in config overrides `dry_run=false` — the user must change the config to allow real mutations.
 - All operations (including dry runs) are logged to `~/.adloop/audit.log`.
 
@@ -112,7 +112,9 @@ These tools call both APIs internally and return unified results with computed `
 
 7. **NEVER add BROAD match keywords without verifying Smart Bidding.** Before calling `draft_keywords` with BROAD match, ALWAYS check the campaign's bidding strategy via `get_campaign_performance` or `run_gaql`. If the campaign uses MANUAL_CPC, MANUAL_CPM, or any non-Smart Bidding strategy, REFUSE to add BROAD match keywords. Use PHRASE or EXACT instead. The `draft_keywords` tool will also return a warning, but you must catch this BEFORE drafting. Broad Match + Manual CPC is the single most common cause of wasted ad spend.
 
-8. **Pre-write validation: check before you change.** Before ANY write operation, verify the campaign/ad group context is sound:
+8. **NEVER create ads or sitelinks with URLs you haven't verified.** Every `final_url` in an RSA and every sitelink URL MUST point to a real, working page. The draft tools now validate URLs automatically and reject non-reachable ones. But before you even call a draft tool, verify the URLs exist — check the codebase for route definitions, or confirm the pages are live. Ads pointing to 404 pages waste budget, destroy quality score, and create a terrible user experience. This applies to display paths too — don't invent URL paths that don't exist on the site.
+
+9. **Pre-write validation: check before you change.** Before ANY write operation, verify the campaign/ad group context is sound:
    - Check bidding strategy (rule 7)
    - Check if conversion tracking is active (zero conversions + high spend = problem to fix first, not more ads to create)
    - Check quality scores (if all keywords have QS < 5, the problem is landing page/relevance, not keyword count)
@@ -163,7 +165,7 @@ Most websites (especially in the EU) use a GDPR cookie consent banner. This has 
    - What are the quality scores? If all keywords are below 5, improving ad relevance and landing pages matters more than new ads.
 3. Use `run_gaql` to find ad group IDs: `SELECT ad_group.id, ad_group.name FROM ad_group WHERE campaign.id = {campaign_id}`
 4. Call `get_tracking_events` to verify conversion tracking exists
-5. If codebase is accessible, read the landing page code to extract value propositions and determine the language
+5. If codebase is accessible, read the landing page code to extract value propositions and determine the language. **Verify the final_url page actually exists** — check route definitions or confirm the URL is live. NEVER use a URL you haven't verified.
 6. Call `draft_responsive_search_ad` with at least 8-10 diverse headlines and 3-4 descriptions. Write copy in the correct language — if the landing page is multilingual or the language is unclear, ask the user before writing. Follow the "Ad Copy Character Limits" section — count characters for every headline before generating
 7. **Always set display paths** (`path1`, `path2`, max 15 chars each). These appear in the display URL (e.g. `example.com/Products/Pricing`) and significantly improve ad relevance. Derive them from the landing page URL structure or the ad's value proposition.
 8. Present the complete preview to the user — include any warnings from the pre-write checks
