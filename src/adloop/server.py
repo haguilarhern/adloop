@@ -985,13 +985,36 @@ def remove_allowed_account(customer_id: str) -> dict:
 @mcp.tool(annotations=_READONLY)
 @_safe
 def list_allowed_accounts() -> dict:
-    """List all Google Ads accounts currently in the allowlist.
+    """List all Google Ads accounts currently in the allowlist with their names.
 
     If the list is empty, all accounts under the MCC are accessible.
     """
     accounts = _config.ads.allowed_accounts
+    if not accounts:
+        return {
+            "allowed_accounts": [],
+            "total": 0,
+            "restriction_active": False,
+        }
+
+    # Fetch account names from MCC
+    try:
+        from adloop.ads.read import list_accounts as _list
+        all_accounts = _list(_config).get("accounts", [])
+        name_map = {
+            str(a["customer_client.id"]): a.get("customer_client.descriptive_name", "")
+            for a in all_accounts
+        }
+    except Exception:
+        name_map = {}
+
+    enriched = [
+        {"customer_id": cid, "name": name_map.get(cid, "Unknown")}
+        for cid in accounts
+    ]
+
     return {
-        "allowed_accounts": accounts,
-        "total": len(accounts),
-        "restriction_active": len(accounts) > 0,
+        "allowed_accounts": enriched,
+        "total": len(enriched),
+        "restriction_active": True,
     }
