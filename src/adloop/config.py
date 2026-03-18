@@ -26,6 +26,7 @@ class AdsConfig:
     developer_token: str = ""
     customer_id: str = ""
     login_customer_id: str = ""
+    allowed_accounts: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -87,6 +88,9 @@ def load_config(config_path: str | None = None) -> AdLoopConfig:
             developer_token=ads_raw.get("developer_token", ""),
             customer_id=ads_raw.get("customer_id", ""),
             login_customer_id=ads_raw.get("login_customer_id", ""),
+            allowed_accounts=[
+                str(a).replace("-", "") for a in ads_raw.get("allowed_accounts", [])
+            ],
         ),
         safety=SafetyConfig(
             max_daily_budget=safety_raw.get("max_daily_budget", 50.0),

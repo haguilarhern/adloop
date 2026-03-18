@@ -9,6 +9,20 @@ if TYPE_CHECKING:
     from adloop.config import AdLoopConfig
 
 
+def _check_account_allowed(config: AdLoopConfig, customer_id: str) -> None:
+    """Raise if customer_id is not in the allowed_accounts list."""
+    allowed = config.ads.allowed_accounts
+    if not allowed:
+        return  # no allowlist configured — all accounts accessible
+    from adloop.ads.client import normalize_customer_id
+    cid = normalize_customer_id(customer_id)
+    if cid not in allowed:
+        raise RuntimeError(
+            f"Account {customer_id} is not in the allowed accounts list. "
+            f"Use add_allowed_account to grant access."
+        )
+
+
 def execute_query(
     config: AdLoopConfig, customer_id: str, query: str
 ) -> list[dict]:
@@ -18,6 +32,12 @@ def execute_query(
     in ads/read.py.
     """
     from adloop.ads.client import get_ads_client, normalize_customer_id
+
+    # Skip allowlist check when querying the MCC itself (for list_accounts)
+    login_cid = normalize_customer_id(config.ads.login_customer_id)
+    cid_check = normalize_customer_id(customer_id)
+    if cid_check != login_cid:
+        _check_account_allowed(config, customer_id)
 
     client = get_ads_client(config)
     service = client.get_service("GoogleAdsService")

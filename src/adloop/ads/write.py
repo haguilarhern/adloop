@@ -625,6 +625,9 @@ def _draft_status_change(
 def _execute_plan(config: AdLoopConfig, plan: object) -> dict:
     """Dispatch to the right Google Ads mutate call based on plan.operation."""
     from adloop.ads.client import get_ads_client, normalize_customer_id
+    from adloop.ads.gaql import _check_account_allowed
+
+    _check_account_allowed(config, plan.customer_id)
 
     client = get_ads_client(config)
     cid = normalize_customer_id(plan.customer_id)

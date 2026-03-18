@@ -915,3 +915,83 @@ def setup_credentials(
         "config_path": str(config_path),
         "credentials_path": str(creds_path),
     }
+
+
+# ---------------------------------------------------------------------------
+# Account Access Management
+# ---------------------------------------------------------------------------
+
+
+def _save_allowed_accounts(accounts: list[str]) -> None:
+    """Persist the allowed_accounts list to config.yaml and reload."""
+    from pathlib import Path
+
+    import yaml
+
+    config_path = Path.home() / ".adloop" / "config.yaml"
+    if not config_path.exists():
+        return
+
+    with open(config_path) as f:
+        config_data = yaml.safe_load(f) or {}
+
+    config_data.setdefault("ads", {})["allowed_accounts"] = accounts
+
+    with open(config_path, "w") as f:
+        yaml.dump(config_data, f, default_flow_style=False)
+
+    _reload_config()
+
+
+@mcp.tool(annotations=_WRITE)
+@_safe
+def add_allowed_account(customer_id: str) -> dict:
+    """Add a Google Ads account to the allowlist.
+
+    Once any account is added, only allowlisted accounts can be queried or
+    modified. The MCC manager account itself is always accessible for
+    listing accounts.
+
+    customer_id: Google Ads account ID (e.g. "869-012-1119" or "8690121119")
+    """
+    normalized = customer_id.replace("-", "")
+    current = list(_config.ads.allowed_accounts)
+    if normalized in current:
+        return {"status": "already_exists", "allowed_accounts": current}
+    current.append(normalized)
+    _save_allowed_accounts(current)
+    return {"status": "added", "customer_id": normalized, "allowed_accounts": current}
+
+
+@mcp.tool(annotations=_WRITE)
+@_safe
+def remove_allowed_account(customer_id: str) -> dict:
+    """Remove a Google Ads account from the allowlist.
+
+    If the allowlist becomes empty, all accounts under the MCC become
+    accessible again (no restriction).
+
+    customer_id: Google Ads account ID (e.g. "869-012-1119" or "8690121119")
+    """
+    normalized = customer_id.replace("-", "")
+    current = list(_config.ads.allowed_accounts)
+    if normalized not in current:
+        return {"status": "not_found", "customer_id": normalized, "allowed_accounts": current}
+    current.remove(normalized)
+    _save_allowed_accounts(current)
+    return {"status": "removed", "customer_id": normalized, "allowed_accounts": current}
+
+
+@mcp.tool(annotations=_READONLY)
+@_safe
+def list_allowed_accounts() -> dict:
+    """List all Google Ads accounts currently in the allowlist.
+
+    If the list is empty, all accounts under the MCC are accessible.
+    """
+    accounts = _config.ads.allowed_accounts
+    return {
+        "allowed_accounts": accounts,
+        "total": len(accounts),
+        "restriction_active": len(accounts) > 0,
+    }
