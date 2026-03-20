@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from adloop.ads.currency import get_currency_code
+
 if TYPE_CHECKING:
     from adloop.config import AdLoopConfig
 
@@ -57,8 +59,6 @@ def get_campaign_performance(
     """
 
     rows = execute_query(config, customer_id, query)
-
-    from adloop.ads.currency import get_currency_code
     currency_code = get_currency_code(config, customer_id)
     _enrich_cost_fields(rows, currency_code)
 
@@ -93,8 +93,6 @@ def get_ad_performance(
     """
 
     rows = execute_query(config, customer_id, query)
-
-    from adloop.ads.currency import get_currency_code
     currency_code = get_currency_code(config, customer_id)
     _enrich_cost_fields(rows, currency_code)
 
@@ -128,8 +126,6 @@ def get_keyword_performance(
     """
 
     rows = execute_query(config, customer_id, query)
-
-    from adloop.ads.currency import get_currency_code
     currency_code = get_currency_code(config, customer_id)
     _enrich_cost_fields(rows, currency_code)
 
@@ -185,8 +181,6 @@ def get_search_terms(
         """
 
     rows = execute_query(config, customer_id, query)
-
-    from adloop.ads.currency import get_currency_code
     currency_code = get_currency_code(config, customer_id)
     _enrich_cost_fields(rows, currency_code)
 
