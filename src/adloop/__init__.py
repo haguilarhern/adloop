@@ -14,7 +14,11 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "init":
         from adloop.cli import run_init_wizard
 
-        run_init_wizard()
+        try:
+            run_init_wizard()
+        except KeyboardInterrupt:
+            print("\n\n  Setup cancelled.\n")
+            sys.exit(130)
     else:
         from adloop.server import mcp
 
