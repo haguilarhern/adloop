@@ -200,6 +200,25 @@ The wizard:
 
 - Python 3.11+
 - A Google Ads account with an MCC (Manager Account)
+- A Google Ads Developer Token (see below)
+
+### Google Ads Developer Token
+
+A developer token is **always required** — even when using AdLoop's built-in OAuth credentials. The built-in credentials handle Google sign-in; the developer token is a separate key that grants API access to your Google Ads data.
+
+1. **Create an MCC** (free) at [ads.google.com/home/tools/manager-accounts](https://ads.google.com/home/tools/manager-accounts/) if you don't have one. Link your regular Google Ads account to it.
+2. In the MCC, go to **Tools & Settings → API Center**
+3. Your **developer token** is shown there. Copy it — the wizard will ask for it.
+
+**Access levels** — your token's access level determines what it can do:
+
+| Level | How to Get | What It Allows |
+|-------|-----------|----------------|
+| **Test Account** | Default for new tokens | Can only access test accounts — **not production accounts**. If you see `DEVELOPER_TOKEN_NOT_APPROVED`, this is why. |
+| **Explorer** | Automatic after first API call with a production account | 2,880 operations/day on production accounts. Enough to get started. |
+| **Basic** | [Apply through API Center](https://ads.google.com/aw/apicenter) | 15,000 operations/day. Apply if you need more. |
+
+> **Getting `DEVELOPER_TOKEN_NOT_APPROVED`?** Your token is at "Test Account" level. Go to [API Center](https://ads.google.com/aw/apicenter) in your MCC and check your access level. If it shows "Test Account", you need to apply for Basic access or wait for Explorer access to be granted after your first production API call.
 
 ### Headless Servers
 
@@ -229,17 +248,7 @@ When you run `adloop init`, choose "No" when asked about built-in credentials. T
 
 > Service accounts are also supported — just place the service account key JSON at the same `credentials_path`. AdLoop detects the file type automatically.
 
-#### Step 3 — Google Ads Developer Token
-
-1. **Create an MCC** (free) at [ads.google.com/home/tools/manager-accounts](https://ads.google.com/home/tools/manager-accounts/) if you don't have one. Link your regular Google Ads account to it.
-2. In the MCC, go to **Tools & Settings → API Center**
-3. Your **developer token** is shown there. Copy it.
-
-Access levels:
-- **Explorer** (automatic) — 2,880 operations/day on production accounts. Enough to get started.
-- **Basic** (requires application) — 15,000 operations/day. Apply through the same API Center page if you need more.
-
-#### Step 4 — Connect to Your Editor
+#### Step 3 — Connect to Your Editor
 
 **Cursor** — Add to your project's `.cursor/mcp.json`:
 
