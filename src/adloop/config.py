@@ -12,13 +12,17 @@ import yaml
 @dataclass
 class GoogleConfig:
     project_id: str = ""
-    credentials_path: str = "~/.adloop/credentials.json"
+    credentials_path: str = ""  # empty = use bundled credentials shipped with the package
     token_path: str = "~/.adloop/token.json"
 
 
 @dataclass
 class GA4Config:
     property_id: str = ""
+
+    def __post_init__(self) -> None:
+        if self.property_id and not self.property_id.startswith("properties/"):
+            self.property_id = f"properties/{self.property_id}"
 
 
 @dataclass
@@ -78,7 +82,7 @@ def load_config(config_path: str | None = None) -> AdLoopConfig:
     return AdLoopConfig(
         google=GoogleConfig(
             project_id=google_raw.get("project_id", ""),
-            credentials_path=google_raw.get("credentials_path", "~/.adloop/credentials.json"),
+            credentials_path=google_raw.get("credentials_path", ""),
             token_path=google_raw.get("token_path", "~/.adloop/token.json"),
         ),
         ga4=GA4Config(

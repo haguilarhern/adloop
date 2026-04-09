@@ -31,8 +31,16 @@ docs/
 .DS_Store
 Thumbs.db
 
+# Generated reports and guides (may contain real business data)
+reports/
+guides/
+
+# Playwright MCP
+.playwright-mcp/
+
 # AdLoop credentials (should be in ~/.adloop/, not in repo)
 credentials.json
+!src/adloop/bundled_credentials.json
 token.json
 *.pem
 

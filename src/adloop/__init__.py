@@ -3,7 +3,7 @@
 import os
 import sys
 
-__version__ = "0.1.0"
+__version__ = "0.4.3"
 
 
 def main() -> None:
@@ -19,10 +19,18 @@ def main() -> None:
 
     The HTTP host/port can be set via ADLOOP_HOST / ADLOOP_PORT env vars.
     """
+    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V"):
+        print(f"adloop {__version__}")
+        return
+
     if len(sys.argv) > 1 and sys.argv[1] == "init":
         from adloop.cli import run_init_wizard
 
-        run_init_wizard()
+        try:
+            run_init_wizard()
+        except KeyboardInterrupt:
+            print("\n\n  Setup cancelled.\n")
+            sys.exit(130)
     else:
         from adloop.server import mcp
 

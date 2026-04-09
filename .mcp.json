@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "adloop": {
+      "command": "uv",
+      "args": ["run", "--directory", ".", "adloop"]
+    }
+  }
+}
