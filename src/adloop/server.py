@@ -1099,6 +1099,202 @@ def draft_sitelinks(
     )
 
 
+@mcp.tool(annotations=_WRITE)
+@_safe
+def draft_pmax_campaign(
+    campaign_name: str,
+    daily_budget: float,
+    bidding_strategy: str,
+    final_url: str,
+    asset_group_name: str,
+    headlines: list[str],
+    descriptions: list[str],
+    long_headlines: list[str],
+    business_name: str,
+    geo_target_ids: list[str],
+    language_ids: list[str],
+    customer_id: str = "",
+    target_cpa: float = 0,
+    target_roas: float = 0,
+) -> dict:
+    """Draft a Performance Max campaign — returns a PREVIEW, does NOT create anything.
+
+    Creates: CampaignBudget + Campaign (PAUSED) + AssetGroup + text assets
+    + geo targeting + language targeting.
+
+    PMax campaigns use asset groups instead of ad groups. They serve across
+    Search, Display, YouTube, Discover, Gmail, and Maps automatically.
+
+    bidding_strategy: MAXIMIZE_CONVERSIONS | TARGET_CPA | TARGET_ROAS |
+                      MAXIMIZE_CONVERSION_VALUE
+                      (MANUAL_CPC and TARGET_SPEND are NOT allowed for PMax)
+    headlines: at least 3, max 30 chars each
+    descriptions: at least 2, max 90 chars each
+    long_headlines: at least 1, max 90 chars each
+    business_name: required, max 25 chars
+    final_url: landing page URL for the asset group
+    geo_target_ids: REQUIRED list of geo target constant IDs
+        Common: "2276" Germany, "2840" USA, "2826" UK, "2250" France.
+    language_ids: REQUIRED list of language constant IDs
+        Common: "1001" German, "1000" English, "1002" French.
+
+    Call confirm_and_apply with the returned plan_id to execute.
+    """
+    from adloop.ads.write import draft_pmax_campaign as _impl
+
+    return _impl(
+        _config,
+        customer_id=customer_id or _config.ads.customer_id,
+        campaign_name=campaign_name,
+        daily_budget=daily_budget,
+        bidding_strategy=bidding_strategy,
+        final_url=final_url,
+        asset_group_name=asset_group_name,
+        headlines=headlines,
+        descriptions=descriptions,
+        long_headlines=long_headlines,
+        business_name=business_name,
+        geo_target_ids=geo_target_ids,
+        language_ids=language_ids,
+        target_cpa=target_cpa,
+        target_roas=target_roas,
+    )
+
+
+@mcp.tool(annotations=_WRITE)
+@_safe
+def draft_pmax_asset_group(
+    campaign_id: str,
+    asset_group_name: str,
+    final_url: str,
+    headlines: list[str],
+    descriptions: list[str],
+    long_headlines: list[str],
+    business_name: str,
+    customer_id: str = "",
+    path1: str = "",
+    path2: str = "",
+) -> dict:
+    """Draft a new asset group in an existing PMax campaign — returns a PREVIEW.
+
+    campaign_id: The PMax campaign to add the asset group to.
+    asset_group_name: Name for the new asset group.
+    final_url: Landing page URL for the asset group.
+    headlines: at least 3, max 30 chars each
+    descriptions: at least 2, max 90 chars each
+    long_headlines: at least 1, max 90 chars each
+    business_name: required, max 25 chars
+    path1/path2: optional display URL paths, max 15 chars each
+
+    Call confirm_and_apply with the returned plan_id to execute.
+    """
+    from adloop.ads.write import draft_pmax_asset_group as _impl
+
+    return _impl(
+        _config,
+        customer_id=customer_id or _config.ads.customer_id,
+        campaign_id=campaign_id,
+        asset_group_name=asset_group_name,
+        final_url=final_url,
+        headlines=headlines,
+        descriptions=descriptions,
+        long_headlines=long_headlines,
+        business_name=business_name,
+        path1=path1,
+        path2=path2,
+    )
+
+
+@mcp.tool(annotations=_WRITE)
+@_safe
+def add_pmax_text_assets(
+    asset_group_id: str,
+    field_type: str,
+    texts: list[str],
+    customer_id: str = "",
+) -> dict:
+    """Draft adding text assets to a PMax asset group — returns a PREVIEW.
+
+    asset_group_id: The asset group to add text assets to.
+    field_type: HEADLINE (max 30 chars) | DESCRIPTION (max 90 chars) |
+                LONG_HEADLINE (max 90 chars) | BUSINESS_NAME (max 25 chars)
+    texts: list of text strings for the specified field type.
+
+    Call confirm_and_apply with the returned plan_id to execute.
+    """
+    from adloop.ads.write import add_pmax_text_assets as _impl
+
+    return _impl(
+        _config,
+        customer_id=customer_id or _config.ads.customer_id,
+        asset_group_id=asset_group_id,
+        field_type=field_type,
+        texts=texts,
+    )
+
+
+@mcp.tool(annotations=_WRITE)
+@_safe
+def remove_pmax_assets(
+    asset_resource_names: list[str],
+    customer_id: str = "",
+) -> dict:
+    """Draft removing asset links from a PMax asset group — returns a PREVIEW.
+
+    asset_resource_names: list of full AssetGroupAsset resource names to unlink.
+    Get these from get_asset_performance or run_gaql queries on asset_group_asset.
+
+    This removes the link between assets and the asset group (does not delete
+    the underlying asset). Use this to replace LOW-performing assets.
+
+    Call confirm_and_apply with the returned plan_id to execute.
+    """
+    from adloop.ads.write import remove_pmax_assets as _impl
+
+    return _impl(
+        _config,
+        customer_id=customer_id or _config.ads.customer_id,
+        asset_resource_names=asset_resource_names,
+    )
+
+
+@mcp.tool(annotations=_WRITE)
+@_safe
+def update_pmax_asset_group(
+    asset_group_id: str,
+    customer_id: str = "",
+    asset_group_name: str | None = None,
+    status: str | None = None,
+    final_urls: list[str] | None = None,
+    path1: str | None = None,
+    path2: str | None = None,
+) -> dict:
+    """Draft an update to a PMax asset group — returns a PREVIEW, does NOT apply.
+
+    Only include the parameters you want to change. Omit the rest.
+
+    asset_group_id: The asset group to update.
+    asset_group_name: New name for the asset group.
+    status: ENABLED or PAUSED.
+    final_urls: Replace all final URLs (not append).
+    path1/path2: Display URL path components, max 15 chars each.
+
+    Call confirm_and_apply with the returned plan_id to execute.
+    """
+    from adloop.ads.write import update_pmax_asset_group as _impl
+
+    return _impl(
+        _config,
+        customer_id=customer_id or _config.ads.customer_id,
+        asset_group_id=asset_group_id,
+        asset_group_name=asset_group_name,
+        status=status,
+        final_urls=final_urls,
+        path1=path1,
+        path2=path2,
+    )
+
+
 @mcp.tool(annotations=_DESTRUCTIVE)
 @_safe
 def confirm_and_apply(

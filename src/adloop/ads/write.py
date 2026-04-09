@@ -983,6 +983,430 @@ def draft_sitelinks(
 
 
 # ---------------------------------------------------------------------------
+# PMax draft tools
+# ---------------------------------------------------------------------------
+
+_PMAX_BIDDING_STRATEGIES = {
+    "MAXIMIZE_CONVERSIONS",
+    "MAXIMIZE_CONVERSION_VALUE",
+    "TARGET_CPA",
+    "TARGET_ROAS",
+}
+
+_PMAX_TEXT_FIELD_LIMITS = {
+    "HEADLINE": 30,
+    "DESCRIPTION": 90,
+    "LONG_HEADLINE": 90,
+    "BUSINESS_NAME": 25,
+}
+
+
+def draft_pmax_campaign(
+    config: AdLoopConfig,
+    *,
+    customer_id: str = "",
+    campaign_name: str = "",
+    daily_budget: float = 0,
+    bidding_strategy: str = "",
+    final_url: str = "",
+    asset_group_name: str = "",
+    headlines: list[str] | None = None,
+    descriptions: list[str] | None = None,
+    long_headlines: list[str] | None = None,
+    business_name: str = "",
+    geo_target_ids: list[str] | None = None,
+    language_ids: list[str] | None = None,
+    target_cpa: float = 0,
+    target_roas: float = 0,
+) -> dict:
+    """Draft a Performance Max campaign — returns preview, does NOT execute."""
+    from adloop.safety.guards import (
+        SafetyViolation,
+        check_blocked_operation,
+        check_budget_cap,
+    )
+    from adloop.safety.preview import ChangePlan, store_plan
+
+    try:
+        check_blocked_operation("create_pmax_campaign", config.safety)
+    except SafetyViolation as e:
+        return {"error": str(e)}
+
+    headlines = headlines or []
+    descriptions = descriptions or []
+    long_headlines = long_headlines or []
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not campaign_name.strip():
+        errors.append("campaign_name is required")
+    if daily_budget <= 0:
+        errors.append("daily_budget must be greater than 0")
+    bs = bidding_strategy.upper() if bidding_strategy else ""
+    if bs not in _PMAX_BIDDING_STRATEGIES:
+        errors.append(
+            f"bidding_strategy must be one of {sorted(_PMAX_BIDDING_STRATEGIES)}, "
+            f"got '{bidding_strategy}'. PMax does not support MANUAL_CPC or TARGET_SPEND."
+        )
+    if bs == "TARGET_CPA" and not target_cpa:
+        errors.append("target_cpa is required when bidding_strategy is TARGET_CPA")
+    if bs == "TARGET_ROAS" and not target_roas:
+        errors.append("target_roas is required when bidding_strategy is TARGET_ROAS")
+    if not final_url:
+        errors.append("final_url is required")
+    if not asset_group_name.strip():
+        errors.append("asset_group_name is required")
+    if not geo_target_ids:
+        errors.append("geo_target_ids is required — PMax campaigns must target specific countries")
+    if not language_ids:
+        errors.append("language_ids is required — PMax campaigns must target specific languages")
+
+    # Text asset validation
+    if len(headlines) < 3:
+        errors.append(f"At least 3 headlines required, got {len(headlines)}")
+    for i, h in enumerate(headlines):
+        if len(h) > 30:
+            errors.append(f"Headline {i + 1} exceeds 30 chars ({len(h)}): '{h}'")
+
+    if len(descriptions) < 2:
+        errors.append(f"At least 2 descriptions required, got {len(descriptions)}")
+    for i, d in enumerate(descriptions):
+        if len(d) > 90:
+            errors.append(f"Description {i + 1} exceeds 90 chars ({len(d)}): '{d}'")
+
+    if len(long_headlines) < 1:
+        errors.append("At least 1 long_headline is required")
+    for i, lh in enumerate(long_headlines):
+        if len(lh) > 90:
+            errors.append(f"Long headline {i + 1} exceeds 90 chars ({len(lh)}): '{lh}'")
+
+    if not business_name.strip():
+        errors.append("business_name is required")
+    elif len(business_name) > 25:
+        errors.append(f"business_name exceeds 25 chars ({len(business_name)}): '{business_name}'")
+
+    if errors:
+        return {"error": "Validation failed", "details": errors}
+
+    try:
+        check_budget_cap(daily_budget, config.safety)
+    except SafetyViolation as e:
+        return {"error": str(e)}
+
+    if final_url:
+        url_check = _validate_urls([final_url])
+        if url_check.get(final_url):
+            return {
+                "error": "URL validation failed",
+                "details": [
+                    f"final_url '{final_url}' is not reachable: {url_check[final_url]}. "
+                    f"Ads MUST point to working URLs."
+                ],
+            }
+
+    if len(headlines) < 5:
+        warnings.append(
+            f"Only {len(headlines)} headlines provided. Google recommends 5+ "
+            "headlines for optimal PMax performance."
+        )
+    if len(descriptions) < 5:
+        warnings.append(
+            f"Only {len(descriptions)} descriptions provided. Google recommends 5+ "
+            "descriptions for optimal PMax performance."
+        )
+
+    plan = ChangePlan(
+        operation="create_pmax_campaign",
+        entity_type="campaign",
+        customer_id=customer_id,
+        changes={
+            "campaign_name": campaign_name,
+            "daily_budget": daily_budget,
+            "bidding_strategy": bs,
+            "target_cpa": target_cpa if target_cpa else None,
+            "target_roas": target_roas if target_roas else None,
+            "final_url": final_url,
+            "asset_group_name": asset_group_name,
+            "headlines": headlines,
+            "descriptions": descriptions,
+            "long_headlines": long_headlines,
+            "business_name": business_name,
+            "geo_target_ids": geo_target_ids or [],
+            "language_ids": language_ids or [],
+        },
+    )
+    store_plan(plan)
+    preview = plan.to_preview()
+    if warnings:
+        preview["warnings"] = warnings
+    return preview
+
+
+def draft_pmax_asset_group(
+    config: AdLoopConfig,
+    *,
+    customer_id: str = "",
+    campaign_id: str = "",
+    asset_group_name: str = "",
+    final_url: str = "",
+    headlines: list[str] | None = None,
+    descriptions: list[str] | None = None,
+    long_headlines: list[str] | None = None,
+    business_name: str = "",
+    path1: str = "",
+    path2: str = "",
+) -> dict:
+    """Draft a new asset group in an existing PMax campaign — returns preview."""
+    from adloop.safety.guards import SafetyViolation, check_blocked_operation
+    from adloop.safety.preview import ChangePlan, store_plan
+
+    try:
+        check_blocked_operation("create_pmax_asset_group", config.safety)
+    except SafetyViolation as e:
+        return {"error": str(e)}
+
+    headlines = headlines or []
+    descriptions = descriptions or []
+    long_headlines = long_headlines or []
+
+    errors: list[str] = []
+
+    if not campaign_id:
+        errors.append("campaign_id is required")
+    if not asset_group_name.strip():
+        errors.append("asset_group_name is required")
+    if not final_url:
+        errors.append("final_url is required")
+
+    if len(headlines) < 3:
+        errors.append(f"At least 3 headlines required, got {len(headlines)}")
+    for i, h in enumerate(headlines):
+        if len(h) > 30:
+            errors.append(f"Headline {i + 1} exceeds 30 chars ({len(h)}): '{h}'")
+
+    if len(descriptions) < 2:
+        errors.append(f"At least 2 descriptions required, got {len(descriptions)}")
+    for i, d in enumerate(descriptions):
+        if len(d) > 90:
+            errors.append(f"Description {i + 1} exceeds 90 chars ({len(d)}): '{d}'")
+
+    if len(long_headlines) < 1:
+        errors.append("At least 1 long_headline is required")
+    for i, lh in enumerate(long_headlines):
+        if len(lh) > 90:
+            errors.append(f"Long headline {i + 1} exceeds 90 chars ({len(lh)}): '{lh}'")
+
+    if not business_name.strip():
+        errors.append("business_name is required")
+    elif len(business_name) > 25:
+        errors.append(f"business_name exceeds 25 chars ({len(business_name)}): '{business_name}'")
+
+    if path1 and len(path1) > 15:
+        errors.append(f"path1 exceeds 15 chars ({len(path1)})")
+    if path2 and len(path2) > 15:
+        errors.append(f"path2 exceeds 15 chars ({len(path2)})")
+
+    if errors:
+        return {"error": "Validation failed", "details": errors}
+
+    if final_url:
+        url_check = _validate_urls([final_url])
+        if url_check.get(final_url):
+            return {
+                "error": "URL validation failed",
+                "details": [
+                    f"final_url '{final_url}' is not reachable: {url_check[final_url]}. "
+                    f"Ads MUST point to working URLs."
+                ],
+            }
+
+    plan = ChangePlan(
+        operation="create_pmax_asset_group",
+        entity_type="asset_group",
+        customer_id=customer_id,
+        changes={
+            "campaign_id": campaign_id,
+            "asset_group_name": asset_group_name,
+            "final_url": final_url,
+            "headlines": headlines,
+            "descriptions": descriptions,
+            "long_headlines": long_headlines,
+            "business_name": business_name,
+            "path1": path1,
+            "path2": path2,
+        },
+    )
+    store_plan(plan)
+    return plan.to_preview()
+
+
+def add_pmax_text_assets(
+    config: AdLoopConfig,
+    *,
+    customer_id: str = "",
+    asset_group_id: str = "",
+    field_type: str = "",
+    texts: list[str] | None = None,
+) -> dict:
+    """Draft adding text assets to a PMax asset group — returns preview."""
+    from adloop.safety.guards import SafetyViolation, check_blocked_operation
+    from adloop.safety.preview import ChangePlan, store_plan
+
+    try:
+        check_blocked_operation("add_pmax_text_assets", config.safety)
+    except SafetyViolation as e:
+        return {"error": str(e)}
+
+    texts = texts or []
+    ft = field_type.upper()
+
+    errors: list[str] = []
+
+    if not asset_group_id:
+        errors.append("asset_group_id is required")
+    if ft not in _PMAX_TEXT_FIELD_LIMITS:
+        errors.append(
+            f"field_type must be one of {sorted(_PMAX_TEXT_FIELD_LIMITS)}, "
+            f"got '{field_type}'"
+        )
+    if not texts:
+        errors.append("At least one text asset is required")
+
+    char_limit = _PMAX_TEXT_FIELD_LIMITS.get(ft, 90)
+    for i, text in enumerate(texts):
+        if len(text) > char_limit:
+            errors.append(
+                f"{ft} text {i + 1} exceeds {char_limit} chars ({len(text)}): '{text}'"
+            )
+
+    if errors:
+        return {"error": "Validation failed", "details": errors}
+
+    plan = ChangePlan(
+        operation="add_pmax_text_assets",
+        entity_type="asset_group_asset",
+        customer_id=customer_id,
+        changes={
+            "asset_group_id": asset_group_id,
+            "field_type": ft,
+            "texts": texts,
+        },
+    )
+    store_plan(plan)
+    return plan.to_preview()
+
+
+def remove_pmax_assets(
+    config: AdLoopConfig,
+    *,
+    customer_id: str = "",
+    asset_resource_names: list[str] | None = None,
+) -> dict:
+    """Draft removing asset links from a PMax asset group — returns preview."""
+    from adloop.safety.guards import SafetyViolation, check_blocked_operation
+    from adloop.safety.preview import ChangePlan, store_plan
+
+    try:
+        check_blocked_operation("remove_pmax_assets", config.safety)
+    except SafetyViolation as e:
+        return {"error": str(e)}
+
+    asset_resource_names = asset_resource_names or []
+
+    errors: list[str] = []
+    if not asset_resource_names:
+        errors.append("At least one asset_resource_name is required")
+
+    if errors:
+        return {"error": "Validation failed", "details": errors}
+
+    plan = ChangePlan(
+        operation="remove_pmax_assets",
+        entity_type="asset_group_asset",
+        customer_id=customer_id,
+        changes={
+            "asset_resource_names": asset_resource_names,
+        },
+    )
+    store_plan(plan)
+    return plan.to_preview()
+
+
+def update_pmax_asset_group(
+    config: AdLoopConfig,
+    *,
+    customer_id: str = "",
+    asset_group_id: str = "",
+    asset_group_name: str | None = None,
+    status: str | None = None,
+    final_urls: list[str] | None = None,
+    path1: str | None = None,
+    path2: str | None = None,
+) -> dict:
+    """Draft updating a PMax asset group — returns preview."""
+    from adloop.safety.guards import SafetyViolation, check_blocked_operation
+    from adloop.safety.preview import ChangePlan, store_plan
+
+    try:
+        check_blocked_operation("update_pmax_asset_group", config.safety)
+    except SafetyViolation as e:
+        return {"error": str(e)}
+
+    errors: list[str] = []
+
+    if not asset_group_id:
+        errors.append("asset_group_id is required")
+
+    valid_statuses = {"ENABLED", "PAUSED"}
+    if status is not None and status.upper() not in valid_statuses:
+        errors.append(f"status must be one of {sorted(valid_statuses)}, got '{status}'")
+
+    if path1 is not None and len(path1) > 15:
+        errors.append(f"path1 exceeds 15 chars ({len(path1)})")
+    if path2 is not None and len(path2) > 15:
+        errors.append(f"path2 exceeds 15 chars ({len(path2)})")
+
+    has_any_change = any([
+        asset_group_name is not None,
+        status is not None,
+        final_urls is not None,
+        path1 is not None,
+        path2 is not None,
+    ])
+    if not has_any_change:
+        errors.append("No changes specified — provide at least one parameter to update")
+
+    if final_urls is not None and len(final_urls) == 0:
+        errors.append("final_urls cannot be empty — provide at least one URL")
+
+    if errors:
+        return {"error": "Validation failed", "details": errors}
+
+    changes: dict = {"asset_group_id": asset_group_id}
+    if asset_group_name is not None:
+        changes["asset_group_name"] = asset_group_name
+    if status is not None:
+        changes["status"] = status.upper()
+    if final_urls is not None:
+        changes["final_urls"] = final_urls
+    if path1 is not None:
+        changes["path1"] = path1
+    if path2 is not None:
+        changes["path2"] = path2
+
+    plan = ChangePlan(
+        operation="update_pmax_asset_group",
+        entity_type="asset_group",
+        entity_id=asset_group_id,
+        customer_id=customer_id,
+        changes=changes,
+    )
+    store_plan(plan)
+    return plan.to_preview()
+
+
+# ---------------------------------------------------------------------------
 # confirm_and_apply — the only function that actually mutates Google Ads
 # ---------------------------------------------------------------------------
 
@@ -1636,6 +2060,8 @@ _MUTATE_RESPONSE_RESULT_FIELDS = [
     "asset_result",
     "campaign_asset_result",
     "customer_asset_result",
+    "asset_group_result",
+    "asset_group_asset_result",
 ]
 
 
@@ -1680,6 +2106,11 @@ def _execute_plan(config: AdLoopConfig, plan: object) -> dict:
         "create_structured_snippets": _apply_create_structured_snippets,
         "create_image_assets": _apply_create_image_assets,
         "create_sitelinks": _apply_create_sitelinks,
+        "create_pmax_campaign": _apply_create_pmax_campaign,
+        "create_pmax_asset_group": _apply_create_pmax_asset_group,
+        "add_pmax_text_assets": _apply_add_pmax_text_assets,
+        "remove_pmax_assets": _apply_remove_pmax_assets,
+        "update_pmax_asset_group": _apply_update_pmax_asset_group,
     }
 
     handler = dispatch.get(plan.operation)
@@ -2465,3 +2896,316 @@ def _apply_create_sitelinks(client: object, cid: str, changes: dict) -> dict:
         client.enums.AssetFieldTypeEnum.SITELINK,
         populate,
     )
+
+
+# ---------------------------------------------------------------------------
+# PMax apply functions
+# ---------------------------------------------------------------------------
+
+
+def _apply_create_pmax_campaign(client: object, cid: str, changes: dict) -> dict:
+    """Create PMax campaign + budget + asset group + text assets atomically."""
+    service = client.get_service("GoogleAdsService")
+    campaign_service = client.get_service("CampaignService")
+    budget_service = client.get_service("CampaignBudgetService")
+    asset_group_service = client.get_service("AssetGroupService")
+    asset_service = client.get_service("AssetService")
+
+    operations: list = []
+
+    # 1. CampaignBudget (temp ID: -1)
+    budget_op = client.get_type("MutateOperation")
+    budget = budget_op.campaign_budget_operation.create
+    budget.resource_name = budget_service.campaign_budget_path(cid, "-1")
+    budget.name = f"Budget - {changes['campaign_name']}"
+    budget.amount_micros = int(changes["daily_budget"] * 1_000_000)
+    budget.delivery_method = client.enums.BudgetDeliveryMethodEnum.STANDARD
+    budget.explicitly_shared = False
+    operations.append(budget_op)
+
+    # 2. Campaign (temp ID: -2, PERFORMANCE_MAX)
+    campaign_op = client.get_type("MutateOperation")
+    campaign = campaign_op.campaign_operation.create
+    campaign.resource_name = campaign_service.campaign_path(cid, "-2")
+    campaign.name = changes["campaign_name"]
+    campaign.campaign_budget = budget_service.campaign_budget_path(cid, "-1")
+    campaign.status = client.enums.CampaignStatusEnum.PAUSED
+    campaign.advertising_channel_type = (
+        client.enums.AdvertisingChannelTypeEnum.PERFORMANCE_MAX
+    )
+
+    bs = changes["bidding_strategy"]
+    if bs == "MAXIMIZE_CONVERSIONS":
+        campaign.maximize_conversions.target_cpa_micros = 0
+        if changes.get("target_cpa"):
+            campaign.maximize_conversions.target_cpa_micros = int(
+                changes["target_cpa"] * 1_000_000
+            )
+    elif bs == "TARGET_CPA":
+        campaign.maximize_conversions.target_cpa_micros = int(
+            changes["target_cpa"] * 1_000_000
+        )
+    elif bs == "MAXIMIZE_CONVERSION_VALUE":
+        campaign.maximize_conversion_value.target_roas = 0
+        if changes.get("target_roas"):
+            campaign.maximize_conversion_value.target_roas = changes["target_roas"]
+    elif bs == "TARGET_ROAS":
+        campaign.maximize_conversion_value.target_roas = changes["target_roas"]
+
+    # PMax does NOT use network_settings
+
+    campaign.contains_eu_political_advertising = (
+        client.enums.EuPoliticalAdvertisingStatusEnum.DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING
+    )
+    operations.append(campaign_op)
+
+    # 3. AssetGroup (temp ID: -3, references campaign -2)
+    ag_op = client.get_type("MutateOperation")
+    asset_group = ag_op.asset_group_operation.create
+    asset_group.resource_name = asset_group_service.asset_group_path(cid, "-3")
+    asset_group.name = changes["asset_group_name"]
+    asset_group.campaign = campaign_service.campaign_path(cid, "-2")
+    asset_group.status = client.enums.AssetGroupStatusEnum.PAUSED
+    asset_group.final_urls.append(changes["final_url"])
+    if changes.get("path1"):
+        asset_group.path1 = changes["path1"]
+    if changes.get("path2"):
+        asset_group.path2 = changes["path2"]
+    operations.append(ag_op)
+
+    # 4. Text assets + AssetGroupAsset links
+    temp_id = -4
+    text_assets = []
+    for h in changes.get("headlines", []):
+        text_assets.append((temp_id, h, "HEADLINE"))
+        temp_id -= 1
+    for d in changes.get("descriptions", []):
+        text_assets.append((temp_id, d, "DESCRIPTION"))
+        temp_id -= 1
+    for lh in changes.get("long_headlines", []):
+        text_assets.append((temp_id, lh, "LONG_HEADLINE"))
+        temp_id -= 1
+    if changes.get("business_name"):
+        text_assets.append((temp_id, changes["business_name"], "BUSINESS_NAME"))
+        temp_id -= 1
+
+    for tid, text, _ft in text_assets:
+        asset_op = client.get_type("MutateOperation")
+        asset = asset_op.asset_operation.create
+        asset.resource_name = asset_service.asset_path(cid, str(tid))
+        asset.text_asset.text = text
+        operations.append(asset_op)
+
+    for tid, _text, ft in text_assets:
+        link_op = client.get_type("MutateOperation")
+        aga = link_op.asset_group_asset_operation.create
+        aga.asset = asset_service.asset_path(cid, str(tid))
+        aga.asset_group = asset_group_service.asset_group_path(cid, "-3")
+        aga.field_type = getattr(client.enums.AssetFieldTypeEnum, ft)
+        operations.append(link_op)
+
+    # 5. Geo targeting (CampaignCriterion referencing campaign -2)
+    for geo_id in changes.get("geo_target_ids") or []:
+        geo_op = client.get_type("MutateOperation")
+        geo_criterion = geo_op.campaign_criterion_operation.create
+        geo_criterion.campaign = campaign_service.campaign_path(cid, "-2")
+        geo_criterion.location.geo_target_constant = (
+            f"geoTargetConstants/{geo_id}"
+        )
+        operations.append(geo_op)
+
+    # 6. Language targeting (CampaignCriterion referencing campaign -2)
+    for lang_id in changes.get("language_ids") or []:
+        lang_op = client.get_type("MutateOperation")
+        lang_criterion = lang_op.campaign_criterion_operation.create
+        lang_criterion.campaign = campaign_service.campaign_path(cid, "-2")
+        lang_criterion.language.language_constant = (
+            f"languageConstants/{lang_id}"
+        )
+        operations.append(lang_op)
+
+    response = service.mutate(customer_id=cid, mutate_operations=operations)
+
+    results: dict = {}
+    for i, resp in enumerate(response.mutate_operation_responses):
+        rn = _extract_resource_name(resp)
+        if rn:
+            if i == 0:
+                results["campaign_budget"] = rn
+            elif i == 1:
+                results["campaign"] = rn
+            elif i == 2:
+                results["asset_group"] = rn
+            else:
+                results.setdefault("other_resources", []).append(rn)
+
+    return results
+
+
+def _apply_create_pmax_asset_group(client: object, cid: str, changes: dict) -> dict:
+    """Create an asset group + text assets in an existing PMax campaign."""
+    service = client.get_service("GoogleAdsService")
+    campaign_service = client.get_service("CampaignService")
+    asset_group_service = client.get_service("AssetGroupService")
+    asset_service = client.get_service("AssetService")
+
+    operations: list = []
+
+    # 1. AssetGroup (temp ID: -1, references existing campaign)
+    ag_op = client.get_type("MutateOperation")
+    asset_group = ag_op.asset_group_operation.create
+    asset_group.resource_name = asset_group_service.asset_group_path(cid, "-1")
+    asset_group.name = changes["asset_group_name"]
+    asset_group.campaign = campaign_service.campaign_path(cid, changes["campaign_id"])
+    asset_group.status = client.enums.AssetGroupStatusEnum.PAUSED
+    asset_group.final_urls.append(changes["final_url"])
+    if changes.get("path1"):
+        asset_group.path1 = changes["path1"]
+    if changes.get("path2"):
+        asset_group.path2 = changes["path2"]
+    operations.append(ag_op)
+
+    # 2. Text assets + AssetGroupAsset links
+    temp_id = -2
+    text_assets = []
+    for h in changes.get("headlines", []):
+        text_assets.append((temp_id, h, "HEADLINE"))
+        temp_id -= 1
+    for d in changes.get("descriptions", []):
+        text_assets.append((temp_id, d, "DESCRIPTION"))
+        temp_id -= 1
+    for lh in changes.get("long_headlines", []):
+        text_assets.append((temp_id, lh, "LONG_HEADLINE"))
+        temp_id -= 1
+    if changes.get("business_name"):
+        text_assets.append((temp_id, changes["business_name"], "BUSINESS_NAME"))
+        temp_id -= 1
+
+    for tid, text, _ft in text_assets:
+        asset_op = client.get_type("MutateOperation")
+        asset = asset_op.asset_operation.create
+        asset.resource_name = asset_service.asset_path(cid, str(tid))
+        asset.text_asset.text = text
+        operations.append(asset_op)
+
+    for tid, _text, ft in text_assets:
+        link_op = client.get_type("MutateOperation")
+        aga = link_op.asset_group_asset_operation.create
+        aga.asset = asset_service.asset_path(cid, str(tid))
+        aga.asset_group = asset_group_service.asset_group_path(cid, "-1")
+        aga.field_type = getattr(client.enums.AssetFieldTypeEnum, ft)
+        operations.append(link_op)
+
+    response = service.mutate(customer_id=cid, mutate_operations=operations)
+
+    results: dict = {}
+    for i, resp in enumerate(response.mutate_operation_responses):
+        rn = _extract_resource_name(resp)
+        if rn:
+            if i == 0:
+                results["asset_group"] = rn
+            else:
+                results.setdefault("other_resources", []).append(rn)
+
+    return results
+
+
+def _apply_add_pmax_text_assets(client: object, cid: str, changes: dict) -> dict:
+    """Create text assets and link them to an existing PMax asset group."""
+    service = client.get_service("GoogleAdsService")
+    asset_service = client.get_service("AssetService")
+
+    asset_group_rn = f"customers/{cid}/assetGroups/{changes['asset_group_id']}"
+    ft = changes["field_type"]
+
+    operations: list = []
+    texts = changes["texts"]
+
+    # Create text assets
+    for i, text in enumerate(texts):
+        asset_op = client.get_type("MutateOperation")
+        asset = asset_op.asset_operation.create
+        asset.resource_name = asset_service.asset_path(cid, str(-(i + 1)))
+        asset.text_asset.text = text
+        operations.append(asset_op)
+
+    # Link assets to asset group
+    for i in range(len(texts)):
+        link_op = client.get_type("MutateOperation")
+        aga = link_op.asset_group_asset_operation.create
+        aga.asset = asset_service.asset_path(cid, str(-(i + 1)))
+        aga.asset_group = asset_group_rn
+        aga.field_type = getattr(client.enums.AssetFieldTypeEnum, ft)
+        operations.append(link_op)
+
+    response = service.mutate(customer_id=cid, mutate_operations=operations)
+
+    results = {"assets": [], "asset_group_assets": []}
+    num_assets = len(texts)
+    for i, resp in enumerate(response.mutate_operation_responses):
+        rn = _extract_resource_name(resp)
+        if rn:
+            if i < num_assets:
+                results["assets"].append(rn)
+            else:
+                results["asset_group_assets"].append(rn)
+
+    return results
+
+
+def _apply_remove_pmax_assets(client: object, cid: str, changes: dict) -> dict:
+    """Remove asset group asset links from a PMax campaign."""
+    service = client.get_service("GoogleAdsService")
+
+    operations: list = []
+    for rn in changes["asset_resource_names"]:
+        op = client.get_type("MutateOperation")
+        op.asset_group_asset_operation.remove = rn
+        operations.append(op)
+
+    response = service.mutate(customer_id=cid, mutate_operations=operations)
+
+    results = {"removed": []}
+    for resp in response.mutate_operation_responses:
+        rn = _extract_resource_name(resp)
+        if rn:
+            results["removed"].append(rn)
+
+    return results
+
+
+def _apply_update_pmax_asset_group(client: object, cid: str, changes: dict) -> dict:
+    """Update an existing PMax asset group."""
+    from google.protobuf import field_mask_pb2
+
+    service = client.get_service("AssetGroupService")
+    operation = client.get_type("AssetGroupOperation")
+    asset_group = operation.update
+    asset_group.resource_name = (
+        f"customers/{cid}/assetGroups/{changes['asset_group_id']}"
+    )
+
+    field_paths: list[str] = []
+    if changes.get("asset_group_name") is not None:
+        asset_group.name = changes["asset_group_name"]
+        field_paths.append("name")
+    if changes.get("status") is not None:
+        asset_group.status = getattr(
+            client.enums.AssetGroupStatusEnum, changes["status"]
+        )
+        field_paths.append("status")
+    if changes.get("final_urls") is not None:
+        asset_group.final_urls.extend(changes["final_urls"])
+        field_paths.append("final_urls")
+    if changes.get("path1") is not None:
+        asset_group.path1 = changes["path1"]
+        field_paths.append("path1")
+    if changes.get("path2") is not None:
+        asset_group.path2 = changes["path2"]
+        field_paths.append("path2")
+
+    operation.update_mask = field_mask_pb2.FieldMask(paths=field_paths)
+    response = service.mutate_asset_groups(
+        customer_id=cid, operations=[operation]
+    )
+    return {"resource_name": response.results[0].resource_name}
